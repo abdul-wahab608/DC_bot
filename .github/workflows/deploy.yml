@@ -1,63 +1,48 @@
-name: Deploy to Production
+name: Deploy to Bot-Hosting
 
 on:
   push:
     branches: [ main ]
     paths-ignore:
       - '**.md'
-      - 'tests/**'
-      - '.github/**'
   workflow_dispatch:
 
 jobs:
-  test-before-deploy:
+  test:
     runs-on: ubuntu-latest
-
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-    - name: Set up Python
-      uses: actions/setup-python@v5
-      with:
-        python-version: '3.11'
-        cache: 'pip'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          cache: 'pip'
 
-    - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install -r requirements.txt
+      - name: Install dependencies
+        run: pip install -r requirements.txt -r requirements-dev.txt
 
-    - name: Run tests
-      run: |
-        pytest tests/ -v --tb=short
-      env:
-        PYTHONPATH: ${{ github.workspace }}
-
-    - name: Verify bot_data.json exists
-      run: |
-        if [ ! -f data/bot_data.json ]; then
-          echo "Warning: bot_data.json not found, creating empty file"
-          mkdir -p data
-          echo '{}' > data/bot_data.json
-        fi
+      - name: Run tests
+        run: pytest tests/ --ignore=tests/performance -q
+        env:
+          PYTHONPATH: ${{ github.workspace }}
 
   deploy:
-    needs: test-before-deploy
+    needs: test
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main'
-
+    env:
+      BH_DEPLOYMENT_ID: 5001cbaa-b245-4f90-80b5-395e163fbd36
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-
-    - name: Deploy to Railway
-      run: |
-        echo "🚀 Deployment triggered"
-        echo "Railway will auto-deploy from main branch"
-        echo "Monitor at: https://railway.app"
-
-    - name: Deployment notification
-      run: |
-        echo "✅ Deployment pipeline completed"
-        echo "Bot will restart automatically on Railway"
+      - name: Pull latest code on Bot-Hosting and restart
+        env:
+          BH_KEY: ${{ secrets.BOT_HOSTING_API_KEY }}
+        run: |
+          if [ -z "$BH_KEY" ]; then echo "::error::BOT_HOSTING_API_KEY secret is not set"; exit 1; fi
+          curl -fsS https://bot-hosting.net/api/mcp \
+            -H "Authorization: Bearer $BH_KEY" \
+            -H "Content-Type: application/json" \
+            -H "Accept: application/json, text/event-stream" \
+            -d "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"deployments_sync\",\"arguments\":{\"id\":\"$BH_DEPLOYMENT_ID\"}}}" \
+            | tee response.txt
+          if grep -qE '"isError": ?true|"error": ?\{' response.txt; then
+            echo "::error::Bot-Hosting sync failed"; exit 1
+          fi

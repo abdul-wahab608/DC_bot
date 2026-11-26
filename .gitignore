@@ -58,8 +58,10 @@ CHANGES_LOG.md
 .DS_Store
 Thumbs.db
 
-# Bot Data (keep structure, ignore sensitive data)
-# data/bot_data.json should be tracked but can be ignored in production
+# Live bot data on the host (BOT_DATA_FILE=storage/bot_data.json); data/ holds seed copies only
+storage/
+.cache/
+.local/
 
 # Logs
 *.log
