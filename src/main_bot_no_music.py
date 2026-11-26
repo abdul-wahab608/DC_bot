@@ -44,6 +44,7 @@ from api_helpers import (
     fetch_ai_unhinged_reply,
 )
 from tts_player import setup_tts_commands
+from user_memory import memory_paused, refresh_facts, relevant_facts, setup_memory_commands
 
 
 # Configure structured logging
@@ -1447,6 +1448,8 @@ def _build_user_context(profile: dict) -> str:
 async def _update_user_profile(message: discord.Message) -> None:
     """Passively build per-user chat profile from every message. Saves every 70 messages."""
     user_id = str(message.author.id)
+    if memory_paused(_user_profiles.get(user_id)):
+        return
     now_hour = str(datetime.now().hour)
     content = message.content
 
@@ -1460,6 +1463,7 @@ async def _update_user_profile(message: discord.Message) -> None:
             "ngram_freq": {},
             "signature_phrases": [],
             "recent_quotes": [],
+            "facts": [],
             "avg_length": 0.0,
             "urdu_ratio": 0.0,
             "funny_ratio": 0.0,
@@ -1536,8 +1540,12 @@ async def _update_user_profile(message: discord.Message) -> None:
             )
             if count >= _NGRAM_SIGNATURE_THRESHOLD
         ][:10]
+        await refresh_facts(profile)
         _profile_dirty_counts[user_id] = 0
         await _user_profiles_store.save(_user_profiles)
+
+
+setup_memory_commands(bot, _user_profiles, _user_profiles_store, _PROFILE_MIN_MESSAGES)
 
 
 # ==================== INTELLIGENT AUTO-REPLY SYSTEM ====================
@@ -2032,6 +2040,7 @@ async def maybe_send_ai_chat_reply(message):
                 cleaned_content,
                 user_context,
                 avoid_phrases=recent_replies,
+                facts=await relevant_facts(profile, cleaned_content),
             )
             if not reply or len(reply) <= 2:
                 reply = await fetch_ai_chat_reply(

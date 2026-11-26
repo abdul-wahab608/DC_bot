@@ -705,38 +705,124 @@ async def fetch_ai_unhinged_reply(
     return result.strip()
 
 
-async def extract_user_facts(recent_quotes: list[str]) -> list[str]:
-    """Extract concrete facts about a user from their recent messages via Gemini."""
-    if not _get_gemini_keys() or not recent_quotes:
-        return []
+_FACT_TOPICS = ("location", "work_study", "food", "games", "sports", "hobbies", "pets", "habits", "other")
+_EMPTY_FACT_UPDATES: dict[str, list] = {"add": [], "replace": [], "confirm": []}
 
+
+def _clean_fact_entry(entry: Any) -> dict | None:
+    if not isinstance(entry, dict):
+        return None
+    text = entry.get("text")
+    if not isinstance(text, str) or not 3 < len(text.strip()) < 80:
+        return None
+    topic = entry.get("topic") if entry.get("topic") in _FACT_TOPICS else "other"
+    return {"text": text.strip(), "topic": topic}
+
+
+def _parse_fact_updates(raw: str | None, num_existing: int) -> dict[str, list]:
+    if not raw:
+        return {k: [] for k in _EMPTY_FACT_UPDATES}
+    try:
+        cleaned = raw.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
+        parsed = json.loads(cleaned)
+    except Exception:
+        return {k: [] for k in _EMPTY_FACT_UPDATES}
+    if not isinstance(parsed, dict):
+        return {k: [] for k in _EMPTY_FACT_UPDATES}
+
+    def _valid_index(i: Any) -> bool:
+        return isinstance(i, int) and not isinstance(i, bool) and 1 <= i <= num_existing
+
+    add = [e for e in map(_clean_fact_entry, parsed.get("add") or []) if e][:5]
+    replace = []
+    for entry in parsed.get("replace") or []:
+        cleaned_entry = _clean_fact_entry(entry)
+        if cleaned_entry and _valid_index(entry.get("index")):
+            replace.append({"index": entry["index"], **cleaned_entry})
+    confirm = [i for i in parsed.get("confirm") or [] if _valid_index(i)]
+    return {"add": add, "replace": replace[:5], "confirm": confirm}
+
+
+async def fetch_fact_updates(existing_facts: list[str], recent_quotes: list[str]) -> dict[str, list]:
+    """Ask Gemini which facts to add, which existing ones a new message contradicts, and which it confirms.
+
+    Returns {"add": [{text, topic}], "replace": [{index, text, topic}], "confirm": [index]};
+    indexes are 1-based positions in existing_facts. Never raises.
+    """
+    if not _get_gemini_keys() or not recent_quotes:
+        return {k: [] for k in _EMPTY_FACT_UPDATES}
+
+    existing_block = (
+        "\n".join(f"{i}. {t}" for i, t in enumerate(existing_facts, 1)) if existing_facts else "(none yet)"
+    )
     quotes_block = "\n".join(f"- {q}" for q in recent_quotes[-10:])
 
     raw = await _gemini_request(
         system=(
-            "Extract 3-5 concrete facts about this Discord user from their messages.\n"
-            "Rules:\n"
-            "- Return ONLY a valid JSON array of strings. No markdown, no explanation.\n"
-            "- Each fact: under 10 words, specific, third-person.\n"
-            "- Only include facts clearly supported by the messages.\n"
-            "- Skip vague or generic observations.\n"
-            'Example output: ["is a university student", "likes biryani", "stays up late at night"]'
+            "You maintain a short memory of facts about one Discord user in a Pakistani community server.\n"
+            "Compare their recent messages with the facts already known and return ONLY a JSON object:\n"
+            '{"add": [{"text": "...", "topic": "..."}], '
+            '"replace": [{"index": 2, "text": "...", "topic": "..."}], "confirm": [1, 3]}\n\n'
+            "- add: NEW facts clearly stated in the messages. Skip anything already known in other words.\n"
+            "- replace: when a message CONTRADICTS a known fact (moved city, changed job, quit a game), "
+            "give that fact's index and the corrected text.\n"
+            "- confirm: indexes of known facts the messages clearly support again.\n"
+            "- Facts: third person, under 10 words, specific (\"lives in Lahore\", \"plays Valorant\").\n"
+            f"- topic is one of: {', '.join(_FACT_TOPICS)}.\n"
+            "- NEVER record: health or mental health, religion or sect, politics, sexuality, family problems, "
+            "money troubles, exact addresses, phone numbers, or anything said about another person.\n"
+            "- Jokes, sarcasm, hypotheticals and song lyrics are not facts.\n"
+            '- If nothing qualifies, return {"add": [], "replace": [], "confirm": []}. No markdown.'
         ),
-        user=f"User messages:\n{quotes_block}\n\nJSON array:",
-        max_tokens=120,
+        user=f"Known facts:\n{existing_block}\n\nRecent messages:\n{quotes_block}\n\nJSON:",
+        max_tokens=400,
         temperature=0.2,
     )
+    return _parse_fact_updates(raw, len(existing_facts))
 
-    if not raw:
-        return []
-    try:
-        cleaned = raw.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
-        parsed = json.loads(cleaned)
-        if isinstance(parsed, list):
-            return [str(f) for f in parsed if isinstance(f, str) and 3 < len(f) < 80][:5]
-    except Exception:
-        pass
-    return []
+
+_EMBED_MODEL = "gemini-embedding-2"
+_EMBED_DIMS = 128
+_EMBED_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{_EMBED_MODEL}:batchEmbedContents"
+
+
+async def fetch_embeddings(texts: list[str]) -> list[list[float]] | None:
+    """Embed texts with Gemini (128 dims). Returns one vector per text, or None on any failure."""
+    keys = _get_gemini_keys()
+    if not keys or not texts:
+        return None
+    payload = {
+        "requests": [
+            {
+                "model": f"models/{_EMBED_MODEL}",
+                "content": {"parts": [{"text": t}]},
+                "outputDimensionality": _EMBED_DIMS,
+                "taskType": "SEMANTIC_SIMILARITY",
+            }
+            for t in texts
+        ]
+    }
+    for key in keys:
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    _EMBED_URL,
+                    params={"key": key},
+                    json=payload,
+                    timeout=aiohttp.ClientTimeout(total=5),
+                ) as resp:
+                    if resp.status == 429:
+                        continue
+                    if resp.status != 200:
+                        logger.warning("Gemini embedding error", extra={"status": resp.status})
+                        return None
+                    data = await resp.json()
+            vectors = [e["values"] for e in data.get("embeddings", [])]
+            return vectors if len(vectors) == len(texts) else None
+        except Exception as e:
+            logger.warning("Gemini embedding request failed", extra={"error": str(e)})
+            return None
+    return None
 
 
 # ==================== AI CHAT REPLY ====================
