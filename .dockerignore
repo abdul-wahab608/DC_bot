@@ -1,0 +1,15 @@
+.git
+.env
+.env.*
+!.env.example
+.venv
+venv
+__pycache__
+*.pyc
+.mypy_cache
+.pytest_cache
+.vscode
+tests
+reports
+CLAUDE.md
+CHANGES_LOG.md
