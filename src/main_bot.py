@@ -1819,11 +1819,14 @@ async def maybe_send_ai_chat_reply(message):
                 full_mention_history,
                 bot_name=bot.user.name,
             )
+        if not reply or len(reply) <= 2:
+            logger.info("ai reply skipped", extra={"path": "mention", "reason": "empty_ai_reply"})
         if reply and len(reply) > 2:
             is_block_reply = _is_system_block_reply(reply)
             if not is_block_reply and _is_too_similar_to_recent(
                 reply, recent_replies_mention
             ):
+                logger.info("ai reply skipped", extra={"path": "mention", "reason": "too_similar", "reply": reply[:80]})
                 return
             if (
                 not is_block_reply
@@ -1856,6 +1859,13 @@ async def maybe_send_ai_chat_reply(message):
         ref
         and isinstance(ref.resolved, discord.Message)
         and ref.resolved.author == bot.user
+        and (not message.content or _is_low_signal_ai_message(message.content))
+    ):
+        logger.info("ai reply skipped", extra={"path": "comeback", "reason": "low_signal_or_no_text"})
+    if (
+        ref
+        and isinstance(ref.resolved, discord.Message)
+        and ref.resolved.author == bot.user
         and message.content
         and not _is_low_signal_ai_message(message.content)
     ):
@@ -1871,6 +1881,8 @@ async def maybe_send_ai_chat_reply(message):
             message.author.display_name,
             emoji_names,
         )
+        if not reply or len(reply) <= 2:
+            logger.info("ai reply skipped", extra={"path": "comeback", "reason": "empty_ai_reply"})
         if reply and len(reply) > 2:
             if not _has_custom_emoji_token(reply) and random.random() < 0.55:
                 custom_emoji = _pick_ai_custom_emoji(content_lower, reply, emoji_tokens_by_name)
