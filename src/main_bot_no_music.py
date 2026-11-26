@@ -44,6 +44,7 @@ from api_helpers import (
     fetch_ai_unhinged_reply,
 )
 from tts_player import setup_tts_commands
+import special_people
 from user_memory import memory_paused, refresh_facts, relevant_facts, setup_memory_commands
 
 
@@ -453,6 +454,28 @@ async def on_message_riddle_answer(message):
 async def roast(interaction: discord.Interaction, member: discord.Member = None):
     if member is None:
         member = interaction.user
+
+    if member.id in special_people.PROTECTED_IDS and not special_people.allow_roast_of(member.id):
+        invoker = interaction.user
+        if invoker.id in special_people.PROTECTED_IDS:
+            text = await fetch_compliment() or random.choice(COMPLIMENTS)
+            embed = discord.Embed(
+                title="💖 No Roast Here",
+                description=f"{member.mention} {text}",
+                color=discord.Color.pink(),
+            )
+        else:
+            text = await fetch_roast() or random.choice(ROASTS)
+            embed = discord.Embed(
+                title="🔄 Uno Reverse!",
+                description=(
+                    f"Roast {special_people.NAMES[member.id]} through me? Nah. "
+                    f"{invoker.mention} {text}"
+                ),
+                color=discord.Color.red(),
+            )
+        await interaction.response.send_message(embed=embed)
+        return
 
     roast_text = await fetch_roast()
     if not roast_text:
@@ -1784,8 +1807,52 @@ async def maybe_send_ai_chat_reply(message):
             logger.exception("Bot Fathers role mention reply failed")
         return
 
+    is_reply_to_bot = bool(
+        message.reference
+        and isinstance(message.reference.resolved, discord.Message)
+        and message.reference.resolved.author == bot.user
+    )
+    addressed = (
+        bot.user in message.mentions
+        or is_reply_to_bot
+        or bool(_re.search(r"\b(bot|chotu)\b", content_lower))
+    )
+    roll = random.random()
+    rules = special_people.reply_rules(message.author.id, roll)
+
+    # --- Who owns the bot: fixed answer, never left to the AI ---
+    if addressed and special_people.is_ownership_question(cleaned_content):
+        reply = special_people.owner_answer()
+        try:
+            async with message.channel.typing():
+                await asyncio.sleep(_typing_delay(reply))
+            await message.reply(reply, mention_author=False)
+        except Exception:
+            logger.exception("owner answer failed")
+        return
+
+    # --- Asked to roast an owner or mina: roast the asker instead ---
+    roast_target = (
+        special_people.protected_target_of_roast(
+            content_lower, [m.id for m in message.mentions if m != bot.user]
+        )
+        if addressed
+        else None
+    )
+    roast_redirect = roast_target is not None and not special_people.allow_roast_of(roast_target)
+    if roast_redirect:
+        rules = special_people.roast_redirect_rules(
+            message.author.display_name, message.author.id, roast_target
+        )
+        logger.info("roast redirected", extra={"target": special_people.NAMES[roast_target]})
+
     # --- Direct mention: always reply, bypass probability ---
-    if bot.user in message.mentions:
+    # Owners and (mostly) mina get a conversational reply instead of a savage comeback.
+    if (
+        bot.user in message.mentions
+        or roast_redirect
+        or (is_reply_to_bot and special_people.gentle_with(message.author.id, roll))
+    ):
         if channel_id not in _channel_history:
             _channel_history[channel_id] = []
         _channel_history[channel_id].append(
@@ -1813,6 +1880,7 @@ async def maybe_send_ai_chat_reply(message):
                 emoji_names,
                 mention_text or cleaned_content,
                 avoid_phrases=recent_replies_mention,
+                extra_rules=rules,
             )
         else:
             reply = await fetch_ai_mention_reply(
@@ -1821,6 +1889,7 @@ async def maybe_send_ai_chat_reply(message):
                 emoji_names,
                 full_mention_history,
                 bot_name=bot.user.name,
+                extra_rules=rules,
             )
         if not reply or len(reply) <= 2:
             logger.info("ai reply skipped", extra={"path": "mention", "reason": "empty_ai_reply"})
@@ -1883,6 +1952,7 @@ async def maybe_send_ai_chat_reply(message):
             cleaned_content,
             message.author.display_name,
             emoji_names,
+            extra_rules=rules,
         )
         if not reply or len(reply) <= 2:
             logger.info("ai reply skipped", extra={"path": "comeback", "reason": "empty_ai_reply"})
@@ -2036,6 +2106,7 @@ async def maybe_send_ai_chat_reply(message):
             emoji_names,
             cleaned_content,
             avoid_phrases=recent_replies,
+            extra_rules=rules,
         )
     else:
         # Use persona reply if this user has a mature profile, fallback to generic
@@ -2053,6 +2124,7 @@ async def maybe_send_ai_chat_reply(message):
                 user_context,
                 avoid_phrases=recent_replies,
                 facts=await relevant_facts(profile, cleaned_content),
+                extra_rules=rules,
             )
             if not reply or len(reply) <= 2:
                 reply = await fetch_ai_chat_reply(
@@ -2060,6 +2132,7 @@ async def maybe_send_ai_chat_reply(message):
                     emoji_names,
                     cleaned_content,
                     avoid_phrases=recent_replies,
+                    extra_rules=rules,
                 )
         else:
             reply = await fetch_ai_chat_reply(
@@ -2067,6 +2140,7 @@ async def maybe_send_ai_chat_reply(message):
                 emoji_names,
                 cleaned_content,
                 avoid_phrases=recent_replies,
+                extra_rules=rules,
             )
 
     if not reply or len(reply) <= 2:

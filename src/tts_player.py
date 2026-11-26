@@ -50,6 +50,7 @@ try:
         _pcm_to_wav_bytes,
     )
     from config import settings as _settings
+    from special_people import GLOBAL_RULES
 except ImportError:
     from .logging_config import get_logger
     from .api_helpers import (
@@ -59,6 +60,7 @@ except ImportError:
         _pcm_to_wav_bytes,
     )
     from .config import settings as _settings
+    from .special_people import GLOBAL_RULES
 
 logger = get_logger(__name__)
 
@@ -168,7 +170,7 @@ async def _fetch_ai_converse_reply(
         "- NO emojis, NO asterisks, NO markdown — this will be spoken aloud by TTS\n"
         "- Use contractions (it's, don't, that's) — they sound natural when spoken\n"
         "- No filler openers like 'Well,' or 'Great question!' — dive straight in\n"
-        "Reply with ONLY the spoken response, nothing else."
+        "Reply with ONLY the spoken response, nothing else.\n\n" + GLOBAL_RULES
     )
 
     history_text = "\n".join(

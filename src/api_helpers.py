@@ -524,6 +524,7 @@ async def fetch_ai_persona_reply(
     *,
     avoid_phrases: list[str] | None = None,
     facts: list[str] | None = None,
+    extra_rules: str = "",
 ) -> str | None:
     if not _get_gemini_keys():
         return None
@@ -578,7 +579,7 @@ async def fetch_ai_persona_reply(
     )
 
     return _validate_reply(await _gemini_request(
-        system=system_prompt,
+        system=system_prompt + extra_rules,
         user=(
             f"Recent chat:\n{context_block}\n\n"
             f"Reply to this message: {last_message}"
@@ -594,6 +595,8 @@ async def fetch_ai_comeback_reply(
     their_reply: str,
     sender_name: str,
     server_emojis: list[str],
+    *,
+    extra_rules: str = "",
 ) -> str | None:
     """Generate a savage comeback when someone replies to the bot's message."""
     if not _get_gemini_keys():
@@ -628,7 +631,7 @@ async def fetch_ai_comeback_reply(
     )
 
     result = await _gemini_request(
-        system=system_prompt,
+        system=system_prompt + extra_rules,
         user=(
             f"What YOU originally said: {bot_original}\n\n"
             f"{sender_name} replied to you with: {their_reply}\n\n"
@@ -649,6 +652,7 @@ async def fetch_ai_unhinged_reply(
     last_message: str,
     *,
     avoid_phrases: list[str] | None = None,
+    extra_rules: str = "",
 ) -> str | None:
     """Savage, high-profanity reply for boises channels only."""
     if not _get_gemini_keys():
@@ -690,7 +694,7 @@ async def fetch_ai_unhinged_reply(
     )
 
     result = await _gemini_request(
-        system=system_prompt,
+        system=system_prompt + extra_rules,
         user=(
             f"Recent chat:\n{context_block}\n\n"
             f"React to this specifically: {last_message}\n\n"
@@ -832,6 +836,7 @@ async def fetch_ai_chat_reply(
     last_message: str,
     *,
     avoid_phrases: list[str] | None = None,
+    extra_rules: str = "",
 ) -> str | None:
     if not _get_gemini_keys():
         return None
@@ -871,7 +876,7 @@ async def fetch_ai_chat_reply(
     )
 
     return _validate_reply(await _gemini_request(
-        system=system_prompt,
+        system=system_prompt + extra_rules,
         user=(
             f"Recent chat (context only):\n{context_block}\n\n"
             f"React to this message specifically: {last_message}"
@@ -889,6 +894,7 @@ async def fetch_ai_mention_reply(
     recent_messages: list[str],
     *,
     bot_name: str = "QuettaTeaBot",
+    extra_rules: str = "",
 ) -> str | None:
     if not _get_gemini_keys():
         return None
@@ -918,7 +924,7 @@ async def fetch_ai_mention_reply(
     )
 
     return _validate_reply(await _gemini_request(
-        system=system_prompt,
+        system=system_prompt + extra_rules,
         user=(
             f"Full conversation (your replies shown as {bot_name}):\n{context_block}\n\n"
             f"{sender_name} tagged you and said: {mention_message}\n\n"
