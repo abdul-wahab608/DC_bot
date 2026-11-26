@@ -81,8 +81,8 @@ A feature-rich Discord bot built for the **Quetta Tea Corner ☕** community ser
 ### Installation
 
 ```bash
-git clone https://github.com/abdullah-fr/QuettaTeaBot.git
-cd QuettaTeaBot
+git clone https://github.com/abdul-wahab608/DC_bot.git
+cd DC_bot
 python -m venv .venv
 
 # macOS / Linux
