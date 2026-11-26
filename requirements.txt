@@ -1,5 +1,5 @@
 discord.py==2.7.1
-dave.py>=0.1.2
+dave.py>=1.1.0
 davey>=0.1.0
 discord-ext-voice-recv>=0.5.0
 audioop-lts>=0.2.1
